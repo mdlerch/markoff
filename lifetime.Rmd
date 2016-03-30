@@ -2,7 +2,8 @@
 title: Expected lifetime
 author: useR member
 output:
-    revealjs::revealjs_presentation
+    revealjs::revealjs_presentation:
+        center: true
 ---
 
 
@@ -27,51 +28,72 @@ n3cens <- sum(cens.data$species == 3)
 n1 <- n1obs + n1cens
 n2 <- n2obs + n2cens
 n3 <- n3obs + n3cens
+count.data <- data.frame(species = c("cutthroat", "rainbow", "grayling"),
+                         observed = c(n1obs, n2obs, n3obs),
+                         censored = c(n1cens, n2cens, n3cens),
+                         total = c(n1, n2, n3))
 ```
+
+Setup
+=====
+
+How to use revealjs
+-------------------
+
+- First, install the revealjs package `install.packages(revealjs)`
+- Now set the output in your yaml:
+
+```
+---
+title: my title
+author: my name
+output:
+    revealjs::revealjs_presentation
+---
+```
+
+Build
+-----
+
+- Now build like normal!
+- Click rstudio button or use `rmarkdown::render("file.Rmd")`
+- See github readme for options:
+
+[rstudio/revealjs](http://github.com/rstudio/revealjs)
 
 Intro
 =====
 
-Something
+The study
 ---------
 
-A collection of `r n1` cutthroat trout, `r n2` rainbow trout, and `r n3`
-grayling were exposed to a toxic biological agent over the course of a 50 day
-study with objective to determine the typical length of survival for these
-species of fish after being exposed to the agent.  However, some fish survived
-the entire duration of the study and, to complicate matters, each fish was
-exposed at a different time during the study.  So, we have a tricky censored
-data problem.
+- Three species of fish, cutthroat, rainbow, and grayling exposed to biological
+  agent.
+- Time until death after exposure is recorded.
+- Some observations are censored; we have last known time alive.
 
-For fish that died, the length of time until death from exposure is recorded.
-For fish that did not die during the study, the length of time from exposure to
-completion of the study (i.e. last known time alive) was recorded.  Time
-measurements are given in hours.
+Objective
+---------
 
-The researchers would like to estimate the average time until death for each
-species and also in contrasting the average time until death of the cutthroat
-and rainbow trouts.
+- Estimate average time until death after exposure for each species.
+- Difference in average time until death between cutthroat and rainbow.
 
 Data
 ====
 
-First, we take a look at the time until death for the fish that did die during
-the study.  The boxplots below give the time until death by species.
+Number of fish
+--------------
 
-```{r boxplots, fig.keep = "last", echo = FALSE}
-boxplot(obs.data$time ~ obs.data$species, xaxt = "n")
-axis(1, at = c(1, 2, 3), label = c("cutthroat", "rainbow", "grayling"))
+```{r number, echo = FALSE}
+library(rbokeh)
+ly_bar(figure(), species, total, data = count.data,
+       hover = c(observed, censored))
 ```
 
-We must be careful of looking too closely at the boxplot.  Trying to make
-inference from the boxplot and the observed data alone might cause us to
-underestimate the average lifetime.  Below is a plot that marks known time
-until death with an "x" and last known time alive with a "o" followed by a
-dashed line to indicate that death happens at some point beyond the mark.
-However, I suspect there are better ways to visualize this information.
+Time until death
+----------------
 
-
-```{r obs_and_censored, fig.keep = "last", echo = FALSE}
+```{r timeuntildeath, echo = FALSE}
 plot(0, 0, type = 'n', xlim = c(0, 4), ylim = c(0, 50), xaxt = 'n', xlab = '', ylab = '')
 axis(1, at = c(1, 2, 3), label = c("cutthroat", "rainbow", "grayling"))
 points(obs.data$time ~ jitter(obs.data$species), pch = 4)
@@ -83,24 +105,58 @@ for (i in 1:nrow(cens.data))
 }
 ```
 
-Fit model
-=========
+Model
+=====
 
-Now that we've played around with the dataset a little bit, we are going to fit
-a Bayesian model that takes into account both the observed times until death as
-well as the last known time alive.  We are using Rstan and the model code is in
-the file `lifetime.stan`.  The simple model assumes that the likelihood that
-fish $i$ of species $j[i]$ perishes after $y$ time is $y_i \sim
-N(\mu_{j[i]}, \sigma^2)$.  To spell it out, we assume that there is a mean time
-until death for each species, but all species share the same variability of
-time until death for individual observations.  (The model is fairly simple and
-you are welcome to investigate and tweak.  In a future R meetup we will figure
-out exactly what is going on with the code and maybe adjust the model to
-something more realistic.)
+Parameters and variables
+------------------------
 
-So, we have four parameters of interest, the mean time until death for each
-species ($\mu_1$, $\mu_2$, and $\mu_3$) and the common standard deviation
-($\sigma$) of time until death.
+- $\mu_j$ is the average lifetime of species $j$.
+- $\sigma$ is the assumed constant across species standard deviation of
+  lifetime.
+- $y_i$ is the lifetime of the $i^\text{th}$ fish.
+- $j[i]$ is the species of the $i^\text{th}$ fish.
+
+Likelihood
+----------
+
+I assume lifetime follows a normal distribution.
+
+$y_i \sim N(\mu_{j[i]}, \sigma^2)$
+
+
+Prior
+-----
+
+$\mu_j \sim N(20, 10)$
+
+$\sigma \sim N(0, 10)_+$
+
+($\sigma$ is constrained to be positive)
+
+Censored?
+---------
+
+- Likelihood tells us how we get our data from the parameters.
+- We have $y\sim N(\mu, \sigma^2)$ and we want to probability of $y>C$.
+- This is just the upper "tail" of $N(\mu, \sigma^2)$ greater than $C$.
+
+```{r chunkname, fig.keep = "last", fig.width = 3, fig.height = 3}
+curve(dnorm(x, 30, 5), xlim = c(0, 50))
+abline(v = 36)
+```
+
+Stan code
+---------
+
+```{r results = "asis", echo = FALSE}
+cat("\`\`\`\n")
+cat(readLines("./lifetime.stan"), sep = "\n")
+cat("\`\`\`")
+```
+
+Fit model and evaluate
+======================
 
 ```{r prepareforstan, echo = FALSE}
 stan.data <- list(n1obs, n2obs, n3obs, n1cens, n2cens, n3cens,
@@ -120,19 +176,15 @@ library(rstan)
 load("./lifetime.RData")
 ```
 
-Evaluate sampler
-================
-
-Before making inference on the model fit, we should investigate to make sure it
-seems like the sampler has converged.  First let's take a look at traceplots
-for each variable to make sure our 4 chains are mixing.
+Traceplot
+---------
 
 ```{r traceplot, echo = FALSE}
 plot(samps, plotfun = "trace", pars = c("mu1", "mu2", "mu3", "sigma"))
 ```
 
-Looks reasonable.  And the summary of our sampler suggests that $\hat{R}$ is
-essentially 1.
+Summary
+-------
 
 ```{r summary, echo = FALSE, results = "markup"}
 samps
@@ -141,9 +193,8 @@ samps
 Results
 =======
 
-Below is a histogram of the posterior of $\mu_1$, the average lifetime for
-cutthroat.  The posterior mean and a 95\% credible interval are marked.
-
+Average lifetime for cutthroat
+------------------------------
 
 ```{r mu1, echo = FALSE, fig.keep = "last"}
 mu1 <- extract(samps, pars = "mu1")$mu1
@@ -152,8 +203,8 @@ abline(v = mean(mu1), lwd = 4)
 abline(v = quantile(mu1, c(0.025, 0.975)), lwd = 2)
 ```
 
-Below is a histogram for the difference in mean time until death between
-cutthroat and rainbow.
+Difference in average lifetime between cutthroat and rainbow
+------------------------------------------------------------
 
 ```{r mu1_minus_mu2, echo = FALSE, fig.keep = "last"}
 mu1mu2 <- extract(samps, pars = "cut_rain")$cut_rain
@@ -162,4 +213,3 @@ abline(v = mean(mu1mu2), lwd = 4)
 abline(v = quantile(mu1mu2, c(0.025, 0.975)), lwd = 2)
 ```
 
-(I've gone pretty light on the results here.  Maybe others can spruce this up!)
